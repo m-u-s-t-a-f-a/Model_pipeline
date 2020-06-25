@@ -4,53 +4,66 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-def missing_report(df, pct_threshold=0):
-    missing_vals_n = df.isna().sum().sort_values(ascending=False)
-    missing_vals_pct = round(missing_vals_n / df.shape[0], 3)
+class EDA:
 
-    missing_vals = pd.concat([missing_vals_n, missing_vals_pct], axis=1, keys=['n', 'pct'])
+    def __init__(self, df, save_fig=False, output_path=None):
+        self.df = df
+        self.save_fig = save_fig
+        self.output_path = output_path
 
-    return missing_vals[missing_vals['pct'] > pct_threshold]
-
-
-def handle_missing_values(df, drop_vars):
-    df_clean = df.copy()
-    df_clean.drop(drop_vars, inplace=True, axis=1)
-    df_clean.dropna(inplace=True)
-
-    return df_clean
+    def _save_fig(self):
+        if self.save_fig is True:
+            if self.output_path is None:
+                raise ValueError('Need to specify output path to save the plot')
+            else:
+                plt.savefig(self.output_path, bbox_inches='tight')
 
 
-def outlier_report(df, pct_threshold=0):
-    df_numeric = df.select_dtypes(['int', 'float']).copy()
-    outliers = df_numeric.apply(lambda x: np.abs(x - x.mean()) / x.std() < 3)  # .all(axis=1).value_counts()
+class CleanData(EDA):
 
-    n_outliers = pd.melt(outliers.apply(pd.Series.value_counts).iloc[[0]])
-    n_outliers['pct_outliers'] = round(n_outliers['value'] / df.shape[0], 2)
-    n_outliers_ordered = n_outliers.dropna().sort_values('value', ascending=False)
+    def missing_report(self, pct_threshold=0):
+        missing_vals_n = self.df.isna().sum().sort_values(ascending=False)
+        missing_vals_pct = round(missing_vals_n / self.df.shape[0], 3)
 
-    return n_outliers_ordered[n_outliers_ordered['pct_outliers'] > pct_threshold]
+        missing_vals = pd.concat([missing_vals_n, missing_vals_pct], axis=1, keys=['n', 'pct'])
 
+        return missing_vals[missing_vals['pct'] > pct_threshold]
 
-def handle_outlier_values(df, drop_vars):
-    """Detect outliers that are 3 std away from mean (1% highest and lowest)"""
-    df_clean = df.select_dtypes(['int', 'float']).copy()
-    df_clean.drop(drop_vars, inplace=True, axis=1)
-    detect_outliers = df_clean.apply(lambda x: np.abs(x - x.mean()) / x.std() < 3).all(axis=1)
+    def outlier_report(self, pct_threshold=0):
+        df_numeric = self.df.select_dtypes(['int', 'float']).copy()
+        outliers = df_numeric.apply(lambda x: np.abs(x - x.mean()) / x.std() < 3)  # .all(axis=1).value_counts()
 
-    df.drop(drop_vars, inplace=True, axis=1)
-    print(detect_outliers.value_counts())
+        n_outliers = pd.melt(outliers.apply(pd.Series.value_counts).iloc[[0]])
+        n_outliers['pct_outliers'] = round(n_outliers['value'] / self.df.shape[0], 2)
+        n_outliers_ordered = n_outliers.dropna().sort_values('value', ascending=False)
 
-    return df[detect_outliers]
+        return n_outliers_ordered[n_outliers_ordered['pct_outliers'] > pct_threshold]
 
+    def handle_missing_values(self, drop_vars):
+        df_clean = self.df.copy()
+        df_clean.drop(drop_vars, inplace=True, axis=1)
+        df_clean.dropna(inplace=True)
 
-def normalize(df):
-    result = df.copy()
-    for feature_name in df.select_dtypes(['int', 'float']).columns:
-        max_value = df[feature_name].max()
-        min_value = df[feature_name].min()
-        result[feature_name] = (df[feature_name] - min_value) / (max_value - min_value)
-    return result
+        return df_clean
+
+    def handle_outlier_values(self, drop_vars):
+        """Detect outliers that are 3 std away from mean (1% highest and lowest)"""
+        df_clean = self.df.select_dtypes(['int', 'float']).copy()
+        df_clean.drop(drop_vars, inplace=True, axis=1)
+        detect_outliers = df_clean.apply(lambda x: np.abs(x - x.mean()) / x.std() < 3).all(axis=1)
+
+        self.df.drop(drop_vars, inplace=True, axis=1)
+        print(detect_outliers.value_counts())
+
+        return self.df[detect_outliers]
+
+    def normalize(self):
+        result = self.df.copy()
+        for feature_name in self.df.select_dtypes(['int', 'float']).columns:
+            max_value = self.df[feature_name].max()
+            min_value = self.df[feature_name].min()
+            result[feature_name] = (self.df[feature_name] - min_value) / (max_value - min_value)
+        return result
 
 
 def plt_feature_distribution(df, chart_height, save_fig=False, output_path=None):
