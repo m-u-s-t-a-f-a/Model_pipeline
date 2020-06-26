@@ -95,7 +95,6 @@ class ExploreVis(EDA):
         plt.title('Feature Set Distribution')
 
         self._save_fig()
-
         return plt.show()
 
     def feature_delta_by_target(self, target_var, metric, top_n, drop_vars=None):
@@ -131,8 +130,8 @@ class ExploreVis(EDA):
         # df_melt = pd.melt(df.drop(fields, axis=1).select_dtypes(['int', 'float']), target_var)
         df_melt = pd.melt(self.df[fields].select_dtypes(['int', 'float']), target_var)
 
-        g = sns.FacetGrid(df_melt, col='variable', hue=target_var, col_wrap=4, aspect=1.5, palette='tab10',
-                          sharey=False,
+        g = sns.FacetGrid(df_melt, col='variable', hue=target_var, col_wrap=4, aspect=1.5, palette='viridis',
+                          sharey=False,  # 'tab10',
                           sharex=False, legend_out=False)
         g = g.map(sns.kdeplot, 'value', shade=True)
 
@@ -144,7 +143,6 @@ class ExploreVis(EDA):
         g.fig.tight_layout()
 
         self._save_fig()
-
         return plt.show()
 
     def bivariate_plot(self, x_var, y_var, x_label, y_label):
@@ -178,7 +176,6 @@ class ExploreVis(EDA):
         f.suptitle(x_label + ' vs ' + y_label)
 
         self._save_fig()
-
         return plt.show()
 
 
