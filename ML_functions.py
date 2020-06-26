@@ -15,74 +15,160 @@ from xgboost import XGBClassifier  # brew install gcc@5 , pip install xgboost
 from sklearn.model_selection import cross_val_score
 
 
-def plt_confusion_matrix(df, label, pred, save_fig=False, output_path=None):
-    cm = confusion_matrix(df[label], df[pred])
-    cm_sum = np.sum(cm, axis=1, keepdims=True)
-    cm_perc = cm / cm_sum
+class Evaluation:
 
-    fig = plt.figure(figsize=(6, 6))
-    sns.heatmap(cm_perc, annot=True, annot_kws={"size": 20}, fmt='.0%', cmap="Blues", cbar=False)
-    plt.ylabel('Actual', fontsize=14)
-    plt.xlabel('Predicted', fontsize=14)
+    def __init__(self, df, save_fig=False, output_path=None):
+        self.df = df
+        self.save_fig = save_fig
+        self.output_path = output_path
 
-    if save_fig is True:
-        if output_path is None:
-            raise ValueError('Need to specify output path to save the plot')
-        else:
-            plt.savefig(output_path, bbox_inches='tight')
-
-    return plt.show()
+    def _save_fig(self):
+        """save plots to specified output location"""
+        if self.save_fig is True:
+            if self.output_path is None:
+                raise ValueError('Need to specify output path to save the plot')
+            else:
+                plt.savefig(self.output_path, bbox_inches='tight')
 
 
-def performance_report(df, label, pred):
-    report = pd.DataFrame(classification_report(df[label], df[pred], output_dict=True, zero_division=0))
-    metrics = report.loc['precision':'f1-score', '1']
-    accuracy = report['accuracy'][0]
-    summary = metrics.append(pd.Series(accuracy, index=['accuracy']))
+class ModelEval(Evaluation):
 
-    print(summary.to_string())
+    @staticmethod
+    def model_prediction(pipeline, x_data, y_data):
+        results = pd.DataFrame(y_data)
+        results['majority_class'] = 0
+        results['preds'] = pipeline.predict(x_data)
+        results['preds_prob'] = np.round(pipeline.predict_proba(x_data)[:, 1], 2)
+
+        return pd.concat([results, x_data], axis=1)
+
+    def correlated_vars(self, x_cont, threshold=0.65):
+        correlated_features = []
+        correlation_matrix = self.df[x_cont].corr()
+
+        for i in range(len(correlation_matrix.columns)):
+            for j in range(i):
+                if abs(correlation_matrix.iloc[i, j]) > threshold:
+                    colname = correlation_matrix.columns[i]
+                    correlated_features.append(colname)
+
+        return list(set(correlated_features))
+
+    def performance_report(self, label, pred):
+        report = pd.DataFrame(classification_report(self.df[label], self.df[pred], output_dict=True, zero_division=0))
+        metrics = report.loc['precision':'f1-score', '1']
+        accuracy = report['accuracy'][0]
+        summary = metrics.append(pd.Series(accuracy, index=['accuracy']))
+
+        print(summary.to_string())
+
+    def plt_confusion_matrix(self, label, pred):
+        cm = confusion_matrix(self.df[label], self.df[pred])
+        cm_sum = np.sum(cm, axis=1, keepdims=True)
+        cm_perc = cm / cm_sum
+
+        plt.figure(figsize=(6, 6))
+        sns.heatmap(cm_perc, annot=True, annot_kws={"size": 20}, fmt='.0%', cmap="Blues", cbar=False)
+        plt.ylabel('Actual', fontsize=14)
+        plt.xlabel('Predicted', fontsize=14)
+
+        self._save_fig()
+        return plt.show()
+
+    def plt_class_distribution(self, pred_class, y_pred_prob):
+        df = pd.concat([pred_class, y_pred_prob], axis=1)
+        df.columns = ['Pred_class', 'Pred_prob']
+
+        for i in pred_class.unique():
+            df1 = df[df['Pred_class'] == i]['Pred_prob']
+            ax = sns.distplot(df1, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 1.5},
+                              label='Pred = ' + str(i))
+
+        ax.set(xlabel='Predicted probabilities', ylabel='Relative volume',
+               title='Distribution of Predicted probablities')
+
+        self._save_fig()
+        return plt.show()
 
 
-def model_prediction(pipeline, x_data, y_data):
-    results = pd.DataFrame(y_data)
-    results['majority_class'] = 0
-    results['preds'] = pipeline.predict(x_data)
-    results['preds_prob'] = np.round(pipeline.predict_proba(x_data)[:, 1], 2)
+class ModelInterpret(Evaluation):
 
-    return pd.concat([results, x_data], axis=1)
+    def plt_feature_importance(self, top_k, pipeline):
+        num_vars = pipeline.named_steps['preprocessor'].transformers_[0][2].tolist()
+        cat_vars = pipeline.named_steps['preprocessor'].transformers_[1][1].named_steps['onehot'].get_feature_names(
+            self.df.select_dtypes(['object']).columns).tolist()
+        features = num_vars + cat_vars
 
+        importances = pipeline.named_steps['model'].feature_importances_
+        indices = np.argsort(importances)[::-1]
+        new_indices = indices[:top_k]
 
-def plt_class_distribution(pred_class, y_pred_prob, save_fig=False, output_path=None):
-    df = pd.concat([pred_class, y_pred_prob], axis=1)
-    df.columns = ['Pred_class', 'Pred_prob']
+        plt.figure(figsize=(12, 6))
 
-    for i in pred_class.unique():
-        df1 = df[df['Pred_class'] == i]['Pred_prob']
-        ax = sns.distplot(df1, hist=False, kde=True, kde_kws={'shade': True, 'linewidth': 1.5},
-                          label='Pred = ' + str(i))
+        plt.barh(range(top_k), importances[new_indices], color='steelblue', align='center')
+        plt.yticks(range(len(indices)), [features[i] for i in indices])
+        plt.title('Feature Importance (Top {})'.format(top_k))
+        plt.xlabel('Relative Importance')
 
-    ax.set(xlabel='Predicted probabilities', ylabel='Relative volume', title='Distribution of Predicted probablities')
+        plt.margins(0)
+        plt.tight_layout()
+        plt.gca().invert_yaxis()
 
-    if save_fig is True:
-        if output_path is None:
-            raise ValueError('Need to specify output path to save the plot')
-        else:
-            plt.savefig(output_path, bbox_inches='tight')
+        self._save_fig()
+        return plt.show()
 
-    return plt.show()
+    @staticmethod
+    def extract_model_coefficients(pipeline, x_vars):
+        # Variable names
+        numeric_vars_pipeline = pipeline.named_steps['preprocessor'].transformers_[0][2].tolist()
+        categorical_var_pipeline = pipeline.named_steps['preprocessor'].transformers_[1][1].named_steps[
+            'onehot'].get_feature_names(x_vars.select_dtypes(['object']).columns).tolist()
+        model_vars = numeric_vars_pipeline + categorical_var_pipeline
 
+        # Coefficients
+        coeffs = pipeline.named_steps['model'].coef_[0].tolist()
 
-def correlated_vars(df, x_cont, threshold=0.65):
-    correlated_features = []
-    correlation_matrix = df[x_cont].corr()
+        # Odds
+        odds = np.exp(coeffs)
 
-    for i in range(len(correlation_matrix.columns)):
-        for j in range(i):
-            if abs(correlation_matrix.iloc[i, j]) > threshold:
-                colname = correlation_matrix.columns[i]
-                correlated_features.append(colname)
+        # Increase in prob
+        i_ = odds / (odds + 1)
 
-    return list(set(correlated_features))
+        # Variable type
+        var_ = list(itertools.repeat('numeric', len(numeric_vars_pipeline))) + list(
+            itertools.repeat('categorical', len(categorical_var_pipeline)))
+
+        # Std magnitude of scaled vars
+        s_ = pipeline.named_steps['preprocessor'].transformers_[0][1].named_steps['scale'].scale_.tolist() + list(
+            itertools.repeat(0, len(categorical_var_pipeline)))
+
+        # Mean of scaled vars
+        m_ = pipeline.named_steps['preprocessor'].transformers_[0][1].named_steps['scale'].mean_.tolist() + list(
+            itertools.repeat(0, len(categorical_var_pipeline)))
+
+        # Variance of scaled vars
+        v_ = pipeline.named_steps['preprocessor'].transformers_[0][1].named_steps['scale'].var_.tolist() + list(
+            itertools.repeat(0, len(categorical_var_pipeline)))
+
+        # Model intercept
+        inter_ = list(itertools.repeat(pipeline.named_steps['model'].intercept_[0],
+                                       (len(numeric_vars_pipeline) + len(categorical_var_pipeline))))
+
+        df = pd.DataFrame(model_vars)
+        df['Var_type'] = var_
+        df['Intercept'] = inter_
+        df['Standard_Coeff'] = coeffs
+        df['Odds'] = odds
+        df['Prob'] = i_
+        df['Mean_for_scaling'] = m_
+        df['Std_for_scaling'] = s_
+        df['Variance_for_scaling'] = v_
+
+        df.columns.values[0] = 'Var'
+
+        df = df.sort_values('Standard_Coeff', ascending=False)
+
+        return df
 
 
 def benchmark_model(x_vars, y, cv_folds=7, save_fig=False, output_path=None):
@@ -126,89 +212,6 @@ def benchmark_model(x_vars, y, cv_folds=7, save_fig=False, output_path=None):
             plt.savefig(output_path, bbox_inches='tight')
 
     return plt.show(), print(means)
-
-
-def plt_feature_importance(top_k, pipeline, df, save_fig=False, output_path=None):
-    num_vars = pipeline.named_steps['preprocessor'].transformers_[0][2].tolist()
-    cat_vars = pipeline.named_steps['preprocessor'].transformers_[1][1].named_steps['onehot'].get_feature_names(
-        df.select_dtypes(['object']).columns).tolist()
-    features = num_vars + cat_vars
-
-    importances = pipeline.named_steps['model'].feature_importances_
-    indices = np.argsort(importances)[::-1]
-    new_indices = indices[:top_k]
-
-    fig = plt.figure(figsize=(12, 6))
-
-    plt.barh(range(top_k), importances[new_indices], color='steelblue', align='center')
-    plt.yticks(range(len(indices)), [features[i] for i in indices])
-    plt.title('Feature Importance (Top {})'.format(top_k))
-    plt.xlabel('Relative Importance')
-
-    plt.margins(0)
-    plt.tight_layout()
-    plt.gca().invert_yaxis()
-
-    if save_fig is True:
-        if output_path is None:
-            raise ValueError('Need to specify output path to save the plot')
-        else:
-            plt.savefig(output_path, bbox_inches='tight')
-
-    return plt.show()
-
-
-def extract_model_coefficients(pipeline, x_vars):
-    # Variable names
-    numeric_vars_pipeline = pipeline.named_steps['preprocessor'].transformers_[0][2].tolist()
-    categorical_var_pipeline = pipeline.named_steps['preprocessor'].transformers_[1][1].named_steps[
-        'onehot'].get_feature_names(x_vars.select_dtypes(['object']).columns).tolist()
-    model_vars = numeric_vars_pipeline + categorical_var_pipeline
-
-    # Coefficients
-    coeffs = pipeline.named_steps['model'].coef_[0].tolist()
-
-    # Odds
-    odds = np.exp(coeffs)
-
-    # Increase in prob
-    i_ = odds / (odds + 1)
-
-    # Variable type
-    var_ = list(itertools.repeat('numeric', len(numeric_vars_pipeline))) + list(
-        itertools.repeat('categorical', len(categorical_var_pipeline)))
-
-    # Std magnitude of scaled vars
-    s_ = pipeline.named_steps['preprocessor'].transformers_[0][1].named_steps['scale'].scale_.tolist() + list(
-        itertools.repeat(0, len(categorical_var_pipeline)))
-
-    # Mean of scaled vars
-    m_ = pipeline.named_steps['preprocessor'].transformers_[0][1].named_steps['scale'].mean_.tolist() + list(
-        itertools.repeat(0, len(categorical_var_pipeline)))
-
-    # Variance of scaled vars
-    v_ = pipeline.named_steps['preprocessor'].transformers_[0][1].named_steps['scale'].var_.tolist() + list(
-        itertools.repeat(0, len(categorical_var_pipeline)))
-
-    # Model intercept
-    inter_ = list(itertools.repeat(pipeline.named_steps['model'].intercept_[0],
-                                   (len(numeric_vars_pipeline) + len(categorical_var_pipeline))))
-
-    df = pd.DataFrame(model_vars)
-    df['Var_type'] = var_
-    df['Intercept'] = inter_
-    df['Standard_Coeff'] = coeffs
-    df['Odds'] = odds
-    df['Prob'] = i_
-    df['Mean_for_scaling'] = m_
-    df['Std_for_scaling'] = s_
-    df['Variance_for_scaling'] = v_
-
-    df.columns.values[0] = 'Var'
-
-    df = df.sort_values('Standard_Coeff', ascending=False)
-
-    return df
 
 
 def evalBinaryClassifier(model, x, y, labels=['Positives', 'Negatives']):
